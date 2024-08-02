@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="he">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ברוכים הבאים לצ'אט</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h2 id="welcomeMessage">ברוכים הבאים לצ'אט </h2>
+        <div class="nav-links">
+            <a href="/register.html">הרשמה</a>
+            <a href="/login.html">התחברות</a>
+        </div>
+    </div>
+    <script>
+        // בדוק אם שם המשתמש קיים ב-local storage והצג אותו
+        const username = localStorage.getItem('username');
+        const welcomeMessage = document.getElementById('welcomeMessage');
+        if (username) {
+            welcomeMessage.textContent = `ברוך הבא ל - ${username}`;
+        }
+    </script>
+</body>
+</html>

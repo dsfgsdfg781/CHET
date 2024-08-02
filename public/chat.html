@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="he">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>צ'אט</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="chat-header">
+            <h2>צ'אט</h2>
+            <div class="chat-options">
+                <a href="/" class="home-link">דף הבית</a>
+                <select id="chatMode">
+                    <option value="group">צ'אט קבוצתי</option>
+                    <option value="private">צ'אט פרטי</option>
+                </select>
+            </div>
+            <button id="logoutButton">התנתק</button>
+        </div>
+        <ul id="chat"></ul>
+        <div class="user-list" id="userList" style="display:none;">
+            <h3>משתמשים מחוברים</h3>
+            <ul id="userListItems"></ul>
+        </div>
+        <div class="input-container">
+            <input id="messageInput" autocomplete="off" placeholder="הקלד הודעה..." />
+            <button id="sendButton" class="send-button">📤</button>
+            <input type="file" id="fileInput" accept="image/*,video/*,audio/*" />
+            <label for="fileInput">🔗</label>
+            <button id="recordButton" class="record-button">🎙</button>
+        </div>
+    </div>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+
+        const chat = document.getElementById('chat');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const fileInput = document.getElementById('fileInput');
+        const logoutButton = document.getElementById('logoutButton');
+        const recordButton = document.getElementById('recordButton');
+        const chatMode = document.getElementById('chatMode');
+        const userList = document.getElementById('userList');
+        const userListItems = document.getElementById('userListItems');
+
+        // קבלת שם המשתמש מה-local storage
+        const username = localStorage.getItem('username') || 'Anonymous';
+
+        // הצגת משתמשים מחוברים
+        socket.on('user list', (users) => {
+            userListItems.innerHTML = '';
+            users.forEach(user => {
+                const li = document.createElement('li');
+                li.textContent = user;
+                userListItems.appendChild(li);
+            });
+        });
+
+        socket.emit('new user', username);
+
+        let mediaRecorder;
+        let audioChunks = [];
+
+        function addMessage(msg, isOwnMessage, sender = 'Anonymous', id = null) {
+            const item = document.createElement('li');
+            item.innerHTML = `<strong>${sender}:</strong> ${msg}`;
+            item.className = isOwnMessage ? 'own-message' : 'other-message';
+            if (isOwnMessage) {
+                const deleteButton = document.createElement('button');
+                deleteButton.textContent = '🗑';
+                deleteButton.className = 'delete-button';
+                deleteButton.onclick = () => {
+                    socket.emit('delete message', id);
+                    chat.removeChild(item);
+                };
+                item.appendChild(deleteButton);
+            }
+            chat.appendChild(item);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        // שליחת הודעות
+        function sendMessage() {
+            if (messageInput.value) {
+                const message = messageInput.value;
+                const messageId = Date.now(); // שימוש בזמן ייחודי כ-ID להודעה
+                addMessage(message, true, username, messageId);
+                socket.emit('chat message', { message, username, id: messageId });
+                messageInput.value = '';
+            } else if (audioChunks.length > 0) {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    const audioUrl = e.target.result;
+                    const messageId = Date.now();
+                    socket.emit('file message', { type: 'audio', data: audioUrl, username, id: messageId });
+                    audioChunks = []; // איפוס הקלטות קוליות לאחר שליחה
+                };
+                reader.readAsDataURL(audioBlob);
+            }
+        }
+
+        // מאזין ללחיצה על כפתור השליחה
+        sendButton.addEventListener('click', sendMessage);
+
+        // מאזין ללחיצה על מקש Enter
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        // העלאת קבצים
+        fileInput.addEventListener('change', () => {
+            const file = fileInput.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const item = document.createElement('li');
+                    const messageId = Date.now();
+                    if (file.type.startsWith('image/')) {
+                        const img = document.createElement('img');
+                        img.src = e.target.result;
+                        img.style.maxWidth = '100%';
+                        item.innerHTML = `<strong>${username}:</strong> `;
+                        item.appendChild(img);
+                    } else if (file.type.startsWith('video/')) {
+                        const video = document.createElement('video');
+                        video.src = e.target.result;
+                        video.controls = true;
+                        video.style.maxWidth = '100%';
+                        item.innerHTML = `<strong>${username}:</strong> `;
+                        item.appendChild(video);
+                    }
+                    item.className = 'own-message';
+                    chat.appendChild(item);
+                    chat.scrollTop = chat.scrollHeight;
+                    socket.emit('file message', { type: file.type.split('/')[0], data: e.target.result, username, id: messageId });
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // הקלטת הודעות קוליות
+        recordButton.addEventListener('click', async () => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                recordButton.textContent = '🎙'; // שינוי חזרה למצב התחלה
+            } else {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder.start();
+                    recordButton.textContent = '⏹️'; // שינוי למצב הקלטה
+                    audioChunks = [];
+
+                    mediaRecorder.ondataavailable = event => {
+                        audioChunks.push(event.data);
+                    };
+
+                    mediaRecorder.onstop = () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        const item = document.createElement('li');
+                        const audio = document.createElement('audio');
+                        audio.src = URL.createObjectURL(audioBlob);
+                        audio.controls = true;
+                        item.innerHTML = `<strong>${username}:</strong> `;
+                        item.appendChild(audio);
+                        item.className = 'own-message';
+                        chat.appendChild(item);
+                        chat.scrollTop = chat.scrollHeight;
+
+                        // Convert audioBlob to base64 for sending via WebSocket
+                        const reader = new FileReader();
+                        reader.onload = function (e) {
+                            const audioUrl = e.target.result;
+                            const messageId = Date.now();
+                            socket.emit('file message', { type: 'audio', data: audioUrl, username, id: messageId });
+                        };
+                        reader.readAsDataURL(audioBlob);
+                    };
+                } catch (error) {
+                    console.error('שגיאה בהתחברות למיקרופון:', error);
+                }
+            }
+        });
+
+        // קבלת הודעות מהשרת
+        socket.on('chat message', (data) => {
+            addMessage(data.message, data.username === username, data.username, data.id);
+        });
+
+        socket.on('file message', (file) => {
+            const item = document.createElement('li');
+            const sender = file.username || 'Anonymous';
+            if (file.type === 'image') {
+                const img = document.createElement('img');
+                img.src = file.data;
+                img.style.maxWidth = '100%';
+                item.innerHTML = `<strong>${sender}:</strong> `;
+                item.appendChild(img);
+            } else if (file.type === 'video') {
+                const video = document.createElement('video');
+                video.src = file.data;
+                video.controls = true;
+                video.style.maxWidth = '100%';
+                item.innerHTML = `<strong>${sender}:</strong> `;
+                item.appendChild(video);
+            } else if (file.type === 'audio') {
+                const audio = document.createElement('audio');
+                audio.src = file.data;
+                audio.controls = true;
+                item.innerHTML = `<strong>${sender}:</strong> `;
+                item.appendChild(audio);
+            }
+            item.className = 'other-message';
+            chat.appendChild(item);
+            chat.scrollTop = chat.scrollHeight;
+        });
+
+        // מחיקת הודעות
+        socket.on('delete message', (id) => {
+            const items = document.querySelectorAll(`#chat li`);
+            items.forEach(item => {
+                if (item.dataset.id === id.toString()) {
+                    item.remove();
+                }
+            });
+        });
+
+        // התנתקות מהצ'אט
+        logoutButton.addEventListener('click', () => {
+            localStorage.removeItem('username'); // מחיקת שם המשתמש מה-local storage בעת התנתקות
+            window.location.href = '/login.html'; // הפניה חזרה לדף ההתחברות
+        });
+
+        // שינוי מצב הצ'אט
+        chatMode.addEventListener('change', () => {
+            const mode = chatMode.value;
+            if (mode === 'private') {
+                userList.style.display = 'block'; // הצגת רשימת משתמשים לצ'אט פרטי
+            } else {
+                userList.style.display = 'none'; // הסתרת רשימת משתמשים בצ'אט קבוצתי
+            }
+        });
+    </script>
+</body>
+</html>
